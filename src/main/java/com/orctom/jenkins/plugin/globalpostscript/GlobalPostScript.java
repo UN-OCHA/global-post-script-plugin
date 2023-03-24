@@ -12,9 +12,12 @@ import hudson.util.FormValidation;
 import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
 import org.apache.commons.codec.net.URLCodec;
-import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpMethod;
-import org.apache.commons.httpclient.methods.GetMethod;
+
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+
 import org.apache.commons.lang.StringUtils;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
@@ -54,7 +57,7 @@ public class GlobalPostScript extends RunListener<Run<?, ?>> implements Describa
     }
 
     String script = getDescriptorImpl().getScript();
-    File file = new File(Jenkins.getInstance().getRootDir().getAbsolutePath() + SCRIPT_FOLDER, script);
+    File file = new File(Jenkins.get().getRootDir().getAbsolutePath() + SCRIPT_FOLDER, script);
     if (file.exists()) {
       try {
         BadgeManager manager = new BadgeManager(run, listener);
@@ -83,7 +86,7 @@ public class GlobalPostScript extends RunListener<Run<?, ?>> implements Describa
   }
 
   public DescriptorImpl getDescriptorImpl() {
-    return (DescriptorImpl) Jenkins.getInstance().getDescriptorOrDie(GlobalPostScript.class);
+    return (DescriptorImpl) Jenkins.get().getDescriptorOrDie(GlobalPostScript.class);
   }
 
   @SuppressWarnings("unchecked")
@@ -141,11 +144,11 @@ public class GlobalPostScript extends RunListener<Run<?, ?>> implements Describa
       for (Map.Entry<String, String> entry : params.entrySet()) {
         newParams.add(new StringParameterValue(entry.getKey(), entry.getValue()));
       }
-      AbstractProject job = Jenkins.getInstance().getItem(jobName, run.getParent().getParent(), AbstractProject.class);
+      AbstractProject job = Jenkins.get().getItem(jobName, run.getParent().getParent(), AbstractProject.class);
       if (null != job) {
         Cause cause = new Cause.UpstreamCause(run);
         boolean scheduled = job.scheduleBuild(job.getQuietPeriod(), cause, new ParametersAction(newParams));
-        if (Jenkins.getInstance().getItemByFullName(job.getFullName()) == job) {
+        if (Jenkins.get().getItemByFullName(job.getFullName()) == job) {
           String name = ModelHyperlinkNote.encodeTo(job) + "  "
               + ModelHyperlinkNote.encodeTo(
               job.getAbsoluteUrl() + job.getNextBuildNumber() + "/",
@@ -173,11 +176,11 @@ public class GlobalPostScript extends RunListener<Run<?, ?>> implements Describa
         println("[WARNING] ignoring URL exception for " + jobTriggerUrl);
       }
 
-      HttpClient client = new HttpClient();
-      HttpMethod method = new GetMethod(url);
+      CloseableHttpClient client = HttpClients.createDefault();
+      HttpGet method = new HttpGet(url);
       try {
-        client.executeMethod(method);
-        int statusCode = method.getStatusCode();
+        CloseableHttpResponse response = client.execute(method);
+        int statusCode = response.getStatusLine().getStatusCode();
         if (statusCode < 400) {
           println("Triggering " + jobUrl);
         } else {
@@ -187,7 +190,11 @@ public class GlobalPostScript extends RunListener<Run<?, ?>> implements Describa
         e.printStackTrace();
         println("[ERROR] Failed to trigger: " + jobUrl + " | " + e.getMessage());
       } finally {
-        method.releaseConnection();
+        try {
+          client.close();
+        } catch (IOException e) {
+          println("[ERROR] Failed to close connection: " + jobUrl + " | " + e.getMessage());
+        }
       }
     }
 
@@ -201,7 +208,7 @@ public class GlobalPostScript extends RunListener<Run<?, ?>> implements Describa
         }
       }
 
-      String rootUrl = Jenkins.getInstance().getRootUrl();
+      String rootUrl = Jenkins.get().getRootUrl();
       if (StringUtils.isNotEmpty(rootUrl)) {
         cause.append("on ").append(rootUrl).append(" ");
       }
@@ -226,6 +233,7 @@ public class GlobalPostScript extends RunListener<Run<?, ?>> implements Describa
     }
 
     public FormValidation doCheckScript(@QueryParameter("script") String name) throws IOException, ServletException {
+      Jenkins.get().checkPermission(Jenkins.ADMINISTER);
       if (StringUtils.isEmpty(name)) {
         return FormValidation.error("Please set the script name");
       }
@@ -238,7 +246,7 @@ public class GlobalPostScript extends RunListener<Run<?, ?>> implements Describa
     public ComboBoxModel doFillScriptItems() {
       ComboBoxModel items = new ComboBoxModel();
 
-      File scriptFolder = new File(Jenkins.getInstance().getRootDir().getAbsolutePath() + SCRIPT_FOLDER);
+      File scriptFolder = new File(Jenkins.get().getRootDir().getAbsolutePath() + SCRIPT_FOLDER);
       FilenameFilter filter = new FilenameFilter() {
         public boolean accept(File dir, String name) {
           String fileName = name.toLowerCase();
